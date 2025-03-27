@@ -145,3 +145,42 @@ Only use **NASNetMobile** for consistency.
 
 ### ❌ **Might be problematic:**
 - NASNetLarge (uses 331x331)
+
+
+# ✅ Final List of CNN Models for Consistency
+
+To ensure all models have the same input size (224x224) and avoid extra preprocessing steps, the final selected models are:
+
+| **Family**      | **Model 1**      | **Model 2**      | **Input Size** | **Status**   |
+|-----------------|------------------|------------------|----------------|--------------|
+| **ResNet**      | ResNet50         | ResNet101        | 224x224        | ✅ Included  |
+| **VGG**         | VGG16            | VGG19            | 224x224        | ✅ Included  |
+| **DenseNet**    | DenseNet121      | DenseNet201      | 224x224        | ✅ Included  |
+| **MobileNet**   | MobileNetV2      | MobileNetV3-Large| 224x224        | ✅ Included  |
+| **NASNet**      | NASNetMobile     | ❌ (Exclude NASNetLarge) | 224x224  | ✅ Included  |
+| **EfficientNet**| EfficientNetB0   | ❌ (Exclude EfficientNetB3) | 224x224 | ✅ Included  |
+| **Inception**   | ❌ Exclude InceptionV3 | ❌ Exclude InceptionResNetV2 | (299x299) | ❌ Excluded  |
+
+---
+
+## ❌ **Excluded Models (Different Input Sizes)**
+
+- **InceptionV3** (299x299)
+- **InceptionResNetV2** (299x299)
+- **EfficientNetB3** (300x300)
+- **NASNetLarge** (331x331)
+
+These models require resizing, which could introduce inconsistencies in the comparison.
+
+---
+
+## 🎯 **Final CNN Model List for Research**
+
+✅ **Models to Use (All 224x224 Input):**
+
+- ResNet50, ResNet101
+- VGG16, VGG19
+- DenseNet121, DenseNet201
+- MobileNetV2, MobileNetV3-Large
+- NASNetMobile
+- EfficientNetB0
