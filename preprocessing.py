@@ -1,41 +1,82 @@
 """
-Medical Image Pipeline with Pseudo-Labeling
+Medical Image Preprocessing Pipeline (Without Training)
 Author: Ayush  
 Date: 2025-03-27
 
 Features:
-- Proper medical imaging data handling
+- Saves preprocessed and augmented images for CNN models
+- Ensures same dataset structure for fair benchmarking
 - Leakage-proof dataset splitting
-- Temperature-scaled pseudo-labeling
-- Class-balanced training
-- GPU-optimized preprocessing
+
+Ensure this data directory structure->
+project_root/
+├── preprocessing.py
+├── processed_data/
+│   ├── train/
+│   │   ├── Normal/
+│   │   ├── Abnormal/
+│   ├── val/
+│   │   ├── Normal/
+│   │   ├── Abnormal/
+│   ├── test/
+│   │   ├── Normal/
+│   │   ├── Abnormal/
+│   ├── pseudo_labeled/
+│   │   ├── Normal/
+│   │   ├── Abnormal/
+└── raw_data/
+    ├── labeled_data/
+    │   ├── Normal/
+    │   ├── Abnormal/
+    ├── unlabeled_data/
+        ├── Train/
+        ├── Test/
+        ├── Validate/
+
 """
 
 import tensorflow as tf
-from tensorflow.keras import layers, models
+from tensorflow.keras import layers
 import numpy as np
 import os
+import cv2
 
 ###############################
-# 1. Data Loading & Preparation
+# 1. Utility Functions
 ###############################
 
-def load_labeled_data(base_path: str, img_size: tuple = (224, 224), batch_size: int = 32):
+def save_image(image, label, save_path, file_name):
     """
-    Load and split labeled medical images with proper class balancing.
+    Save an image as a preprocessed file.
 
     Args:
-        base_path: Path to directory containing Normal/Abnormal subfolders.
-        img_size: Target image dimensions (height, width).
-        batch_size: Number of images per batch.
-
-    Returns:
-        tuple: (train_ds, val_ds, test_ds), class_weights
+        image: TensorFlow image tensor.
+        label: Class label (int).
+        save_path: Destination folder.
+        file_name: File name to save.
     """
-    # Train set (70%)
-    train_ds = tf.keras.utils.image_dataset_from_directory(
+    os.makedirs(save_path, exist_ok=True)
+    img = tf.keras.preprocessing.image.array_to_img(image)
+    img.save(os.path.join(save_path, file_name))
+
+
+###############################
+# 2. Data Preprocessing & Storage
+###############################
+
+def load_and_preprocess_data(base_path, save_dir, img_size=(224, 224), batch_size=32):
+    """
+    Load, preprocess, and save images.
+
+    Args:
+        base_path: Path to labeled data (Normal/Abnormal subfolders).
+        save_dir: Path to save processed images.
+        img_size: Image size (height, width).
+        batch_size: Batch size.
+    """
+    dataset = tf.keras.utils.image_dataset_from_directory(
         base_path,
-        label_mode='int',  # Ensure integer labels for class weighting
+        label_mode='int',
         color_mode='rgb',
         batch_size=batch_size,
         image_size=img_size,
@@ -45,7 +86,6 @@ def load_labeled_data(base_path: str, img_size: tuple = (224, 224), batch_size: 
         subset='training'
     )
 
-    # Temp set (30%) - Split into validation (15%) and test (15%)
     temp_ds = tf.keras.utils.image_dataset_from_directory(
         base_path,
         label_mode='int',
@@ -62,128 +102,126 @@ def load_labeled_data(base_path: str, img_size: tuple = (224, 224), batch_size: 
     val_ds = temp_ds.take(val_size)
     test_ds = temp_ds.skip(val_size)
 
-    # Compute class weights
-    class_counts = np.bincount(np.concatenate([y.numpy() for _, y in train_ds], axis=0))
-    class_weights = {0: class_counts[1] / class_counts.sum(), 1: class_counts[0] / class_counts.sum()}
-
-    # Normalization
+    # Normalization function
     normalization = layers.Rescaling(1./255)
 
-    return (
-        train_ds.map(lambda x, y: (normalization(x), y)).cache().shuffle(1000).prefetch(tf.data.AUTOTUNE),
-        val_ds.map(lambda x, y: (normalization(x), y)).cache().prefetch(tf.data.AUTOTUNE),
-        test_ds.map(lambda x, y: (normalization(x), y)).cache().prefetch(tf.data.AUTOTUNE),
-        class_weights
-    )
-
-###############################
-# 2. Medical Image Augmentation
-###############################
-
-def medical_augmentation():
-    """
-    Create augmentation pipeline for medical images.
-    """
-    return tf.keras.Sequential([
+    # Augmentation for training set only
+    augmenter = tf.keras.Sequential([
         layers.RandomFlip("horizontal_and_vertical"),
         layers.RandomRotation(0.15, fill_mode='constant'),
         layers.RandomZoom((-0.1, 0.2)),
         layers.RandomContrast(0.1),
         layers.GaussianNoise(0.01)
-    ], name='medical_augmentation')
+    ])
+
+    # Save processed images
+    for ds, split in [(dataset, "train"), (val_ds, "val"), (test_ds, "test")]:
+        for i, (images, labels) in enumerate(ds):
+            for j, (image, label) in enumerate(zip(images, labels)):
+                # Normalize
+                image = normalization(image)
+
+                # Apply augmentation only to training images
+                if split == "train":
+                    image = augmenter(image, training=True)
+
+                class_name = "Normal" if label.numpy() == 0 else "Abnormal"
+                file_name = f"{i}_{j}.jpg"
+                save_image(image, os.path.join(save_dir, split, class_name), file_name)
+
 
 ###############################
 # 3. Unlabeled Data Processing
 ###############################
 
-def load_unlabeled_data(base_path: str, img_size: tuple = (224, 224), batch_size: int = 32):
+def load_and_save_unlabeled_data(base_path, save_dir, img_size=(224, 224), batch_size=32):
     """
-    Load and normalize unlabeled medical images.
+    Load, normalize, and save unlabeled medical images.
 
     Args:
-        base_path: Root directory containing Train subfolder.
-
-    Returns:
-        tf.data.Dataset
+        base_path: Path to unlabeled Train/ folder.
+        save_dir: Path to save pseudo-labeled images.
     """
-    return tf.keras.utils.image_dataset_from_directory(
+    unlabeled_ds = tf.keras.utils.image_dataset_from_directory(
         os.path.join(base_path, "Train"),
         labels=None,
         color_mode='rgb',
         batch_size=batch_size,
         image_size=img_size,
         shuffle=False
-    ).map(layers.Rescaling(1./255))
+    )
+
+    normalization = layers.Rescaling(1./255)
+
+    for i, images in enumerate(unlabeled_ds):
+        for j, image in enumerate(images):
+            image = normalization(image)
+            file_name = f"{i}_{j}.jpg"
+            save_image(image, os.path.join(save_dir, "unlabeled"), file_name)
+
 
 ###############################
-# 4. Pseudo-Labeling
+# 4. Pseudo-Labeling & Storage
 ###############################
 
-def generate_pseudo_labels(model, unlabeled_ds, confidence_threshold=0.9, temperature=0.7):
+def generate_and_store_pseudo_labels(model, save_dir, confidence_threshold=0.9, temperature=0.7):
     """
-    Generate pseudo-labels with temperature scaling.
+    Generate and store pseudo-labels with temperature scaling.
 
     Args:
         model: Pre-trained model for prediction.
-        unlabeled_ds: Dataset of unlabeled images.
+        save_dir: Folder to store pseudo-labeled images.
         confidence_threshold: Minimum confidence score.
         temperature: Softmax temperature for confidence calibration.
-
-    Returns:
-        Dataset with (image, pseudo_label) pairs.
     """
-    # Get predictions
-    probs = model.predict(unlabeled_ds, verbose=0)
+    # Load preprocessed unlabeled data
+    unlabeled_images = []
+    file_names = []
+    unlabeled_path = os.path.join(save_dir, "unlabeled")
+
+    for img_name in os.listdir(unlabeled_path):
+        img = cv2.imread(os.path.join(unlabeled_path, img_name))
+        img = cv2.resize(img, (224, 224))
+        img = img.astype(np.float32) / 255.0
+        unlabeled_images.append(img)
+        file_names.append(img_name)
+
+    unlabeled_images = np.array(unlabeled_images)
+
+    # Predict labels
+    probs = model.predict(unlabeled_images, verbose=0)
     scaled_probs = tf.nn.sigmoid(probs / temperature).numpy().flatten()
     
-    # Filter high-confidence samples
-    confidence_mask = scaled_probs > confidence_threshold
-    images = np.concatenate([x.numpy() for x in unlabeled_ds], axis=0)
-    filtered_images = images[confidence_mask]
-    pseudo_labels = (scaled_probs[confidence_mask] > 0.5).astype(np.float32)
+    for i, prob in enumerate(scaled_probs):
+        if prob > confidence_threshold:
+            pseudo_label = "Normal" if prob < 0.5 else "Abnormal"
+            save_image(unlabeled_images[i], os.path.join(save_dir, "pseudo_labeled", pseudo_label), file_names[i])
 
-    return tf.data.Dataset.from_tensor_slices((filtered_images, pseudo_labels)).batch(32).prefetch(tf.data.AUTOTUNE)
 
 ###############################
-# 5. Complete Pipeline
+# 5. Main Execution
 ###############################
 
-def main_pipeline():
-    # Configuration
-    LABELED_PATH = "labeled_data"
-    UNLABELED_PATH = "unlabeled_data"
+def main():
+    LABELED_PATH = "raw_data/labeled_data"
+    UNLABELED_PATH = "raw_data/unlabeled_data"
+    SAVE_DIR = "processed_data"
     IMG_SIZE = (224, 224)
     BATCH_SIZE = 32
-    CONFIDENCE_THRESHOLD = 0.9
 
-    # Load labeled data
-    train_ds, val_ds, test_ds, class_weights = load_labeled_data(LABELED_PATH, IMG_SIZE, BATCH_SIZE)
+    print("🔄 Processing labeled images...")
+    load_and_preprocess_data(LABELED_PATH, SAVE_DIR, IMG_SIZE, BATCH_SIZE)
 
-    # Apply augmentation to training data
-    augmenter = medical_augmentation()
-    augmented_train = train_ds.map(lambda x, y: (augmenter(x, training=True), y)).shuffle(1000).prefetch(tf.data.AUTOTUNE)
+    print("🔄 Processing unlabeled images...")
+    load_and_save_unlabeled_data(UNLABELED_PATH, SAVE_DIR, IMG_SIZE, BATCH_SIZE)
 
-    # Load and initialize the model
-    base_model = tf.keras.applications.EfficientNetV2S(weights=None, include_top=False, input_shape=(*IMG_SIZE, 3))
-    x = layers.GlobalAveragePooling2D()(base_model.output)
-    x = layers.Dense(1, activation='sigmoid')(x)
-    model = tf.keras.Model(inputs=base_model.input, outputs=x)
-    model.load_weights("your_pretrained_weights.h5")
+    # Load model for pseudo-labeling
+    model = tf.keras.models.load_model("your_pretrained_model.h5")
+    
+    print("🔄 Generating pseudo-labels...")
+    generate_and_store_pseudo_labels(model, SAVE_DIR)
 
-    # Load and generate pseudo-labels
-    unlabeled_ds = load_unlabeled_data(UNLABELED_PATH, IMG_SIZE, BATCH_SIZE)
-    pseudo_ds = generate_pseudo_labels(model, unlabeled_ds, CONFIDENCE_THRESHOLD)
-
-    # Combine datasets
-    final_train = augmented_train.concatenate(pseudo_ds).shuffle(1000).prefetch(tf.data.AUTOTUNE)
-
-    print("\nPipeline Summary:")
-    print(f"Training samples: {len(train_ds)*BATCH_SIZE}")
-    print(f"Pseudo-labels: {len(pseudo_ds)*BATCH_SIZE}")
-    print(f"Final training size: {len(final_train)*BATCH_SIZE}")
-    print(f"Class weights: {class_weights}")
-
-    return final_train, val_ds, test_ds, class_weights
+    print("\n✅ Preprocessing complete. Data saved in 'processed_data/'.")
 
 if __name__ == "__main__":
-    final_train, val_ds, test_ds, class_weights = main_pipeline()
+    main()
