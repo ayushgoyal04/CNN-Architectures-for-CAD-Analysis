@@ -14,7 +14,7 @@ This document provides an analysis of the input and output formats of various mo
 - **Input:** `(224, 224, 3)`
 - **Output:** Same as ResNet50
 
-#### Verdict: 
+#### Verdict:
 ✅ **No issue** – standard CNN input and output.
 
 ---
@@ -181,6 +181,5 @@ These models require resizing, which could introduce inconsistencies in the comp
 - ResNet50, ResNet101
 - VGG16, VGG19
 - DenseNet121, DenseNet201
-- MobileNetV2, MobileNetV3-Large
-- NASNetMobile
+- MobileNetV2
 - EfficientNetB0
