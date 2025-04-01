@@ -105,3 +105,4 @@ Each image is preprocessed to a resolution of 224x224 pixels.
 
 This report provides a comprehensive summary of your research journey, covering objectives, methodology, results, and conclusions. Let me know if you need refinements! 🚀
 
+note-> in the later training, only 8 models were used instead of the previous 10.
